@@ -21,7 +21,7 @@ pub trait InterfaceVariant {
 }
 
 /// Specifies an IRQ processing state to run the loop to
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug,Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum IrqState {
     /// Runs until mode-specific event is detected.
     /// Depending on Radio mode, it can be either:

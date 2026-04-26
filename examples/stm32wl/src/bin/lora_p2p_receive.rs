@@ -6,7 +6,7 @@
 #[path = "../iv.rs"]
 mod iv;
 
-use defmt::info;
+use defmt::{warn, info};
 use embassy_executor::Spawner;
 use embassy_stm32::bind_interrupts;
 use embassy_stm32::gpio::{Level, Output, Pin, Speed};
@@ -14,13 +14,14 @@ use embassy_stm32::spi::Spi;
 use embassy_stm32::time::Hertz;
 use embassy_time::{Delay, Timer};
 use lora_phy::sx126x::{Stm32wl, Sx126x, TcxoCtrlVoltage};
+use lora_phy::mod_traits::InterfaceVariant;
 use lora_phy::{mod_params::*, sx126x};
 use lora_phy::{LoRa, RxMode};
 use {defmt_rtt as _, panic_probe as _};
 
 use self::iv::{InterruptHandler, Stm32wlInterfaceVariant, SubghzSpiDevice};
 
-const LORA_FREQUENCY_IN_HZ: u32 = 903_900_000; // warning: set this appropriately for the region
+const LORA_FREQUENCY_IN_HZ: u32 = 868_000_000; // warning: set this appropriately for the region
 
 bind_interrupts!(struct Irqs{
     SUBGHZ_RADIO => InterruptHandler;
@@ -61,7 +62,10 @@ async fn main(_spawner: Spawner) {
         use_dcdc: true,
         rx_boost: false,
     };
-    let iv = Stm32wlInterfaceVariant::new(Irqs, use_high_power_pa, Some(ctrl1), Some(ctrl2), Some(ctrl3)).unwrap();
+    let mut iv = Stm32wlInterfaceVariant::new(Irqs, use_high_power_pa, Some(ctrl1), Some(ctrl2), Some(ctrl3)).unwrap();
+while let Err(e) = iv.reset(&mut Delay).await {
+    Timer::after_secs(1).await;
+}
     let mut lora = LoRa::new(Sx126x::new(spi, iv, config), false, Delay).await.unwrap();
 
     let mut debug_indicator = Output::new(p.PB9, Level::Low, Speed::Low);
@@ -71,11 +75,12 @@ async fn main(_spawner: Spawner) {
     Timer::after_secs(5).await;
     start_indicator.set_low();
 
-    let mut receiving_buffer = [00u8; 100];
+    let mut receiving_buffer = [0u8; 256];
+
 
     let mdltn_params = {
         match lora.create_modulation_params(
-            SpreadingFactor::_10,
+            SpreadingFactor::_9,
             Bandwidth::_250KHz,
             CodingRate::_4_8,
             LORA_FREQUENCY_IN_HZ,
@@ -109,21 +114,16 @@ async fn main(_spawner: Spawner) {
         }
     };
 
+    let mut rx_count = 0;
     loop {
-        receiving_buffer = [00u8; 100];
+        receiving_buffer = [0u8; 256];
         match lora.rx(&rx_pkt_params, &mut receiving_buffer).await {
             Ok((received_len, _rx_pkt_status)) => {
-                if (received_len == 3)
-                    && (receiving_buffer[0] == 0x01u8)
-                    && (receiving_buffer[1] == 0x02u8)
-                    && (receiving_buffer[2] == 0x03u8)
-                {
-                    info!("rx successful");
-                    debug_indicator.set_high();
-                    Timer::after_secs(5).await;
-                    debug_indicator.set_low();
+                if received_len > 2 && receiving_buffer[..3] == [36, 0, 20] {
+                    info!("rx {} successful", rx_count);
+                    rx_count+=1;
                 } else {
-                    info!("rx unknown packet");
+                    warn!("unknown pkt: {}", &receiving_buffer[..received_len as _]);
                 }
             }
             Err(err) => info!("rx unsuccessful = {}", err),
