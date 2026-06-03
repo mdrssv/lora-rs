@@ -13,6 +13,7 @@ use embassy_stm32::gpio::{Level, Output, Pin, Speed};
 use embassy_stm32::spi::Spi;
 use embassy_stm32::time::Hertz;
 use embassy_time::{Delay, Timer};
+use embassy_stm32::mode::Async;
 use lora_phy::sx126x::{Stm32wl, Sx126x, TcxoCtrlVoltage};
 use lora_phy::mod_traits::InterfaceVariant;
 use lora_phy::{mod_params::*, sx126x};
@@ -28,7 +29,7 @@ bind_interrupts!(struct Irqs{
 });
 
 #[embassy_executor::main]
-async fn main(_spawner: Spawner) {
+async fn main(spawner: Spawner) {
     let mut config = embassy_stm32::Config::default();
     {
         use embassy_stm32::rcc::*;
@@ -68,12 +69,13 @@ while let Err(e) = iv.reset(&mut Delay).await {
 }
     let mut lora = LoRa::new(Sx126x::new(spi, iv, config), false, Delay).await.unwrap();
 
-    let mut debug_indicator = Output::new(p.PB9, Level::Low, Speed::Low);
-    let mut start_indicator = Output::new(p.PB15, Level::Low, Speed::Low);
+    spawner.spawn(task(lora));
+}
+// `lora_phy::LoRa<Sx126x<SubghzSpiDevice<embassy_stm32::spi::Spi<'_, embassy_stm32::mode::Async>>, Stm32wlInterfaceVariant<embassy_stm32::gpio::Output<'_>>, Stm32wl>, embassy_time::Delay>`
+#[embassy_executor::task]
+pub async fn task(mut lora: LoRa<Sx126x<SubghzSpiDevice<Spi<'static,Async>>,Stm32wlInterfaceVariant<Output<'static>>, Stm32wl> ,Delay>) {
 
-    start_indicator.set_high();
     Timer::after_secs(5).await;
-    start_indicator.set_low();
 
     let mut receiving_buffer = [0u8; 256];
 
