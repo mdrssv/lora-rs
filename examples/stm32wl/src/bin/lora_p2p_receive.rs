@@ -10,6 +10,7 @@ use defmt::{warn, info, error};
 use embassy_executor::Spawner;
 use embassy_stm32::bind_interrupts;
 use embassy_stm32::gpio::{Level, Output, Pin, Speed};
+use embassy_stm32::rcc::WakeGuard;
 use embassy_stm32::spi::Spi;
 use embassy_stm32::time::Hertz;
 use embassy_stm32::spi::mode::Master;
@@ -139,6 +140,7 @@ pub async fn task(mut lora: LoRa<Sx126x<SubghzSpiDevice<Spi<'static,Async, Maste
 
     let mut rx_count = 0;
     let selectable = true;
+    let _guard = WakeGuard::new(embassy_stm32::rcc::StopMode::Stop1);
     if selectable {
         loop {
             match select(Timer::after_secs(15), wait_for_rx_irq(&mut lora, &mdltn_params, &rx_pkt_params)).await {

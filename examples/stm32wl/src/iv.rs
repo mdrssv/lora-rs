@@ -68,10 +68,22 @@ where
     }
 
     async fn await_irq(&mut self) -> Result<(), RadioError> {
+        IRQ_SIGNAL.reset();
         // Clear pending interrupts before enabling IRQ
         NVIC::unpend(pac::Interrupt::SUBGHZ_RADIO);
+        // Guard ensures interrupt is disabled if this future is dropped/cancelled
+        struct IrqGuard;
+        impl Drop for IrqGuard {
+            fn drop(&mut self) {
+                interrupt::SUBGHZ_RADIO.disable();
+                // Also clear any pending IRQ left behind
+                NVIC::unpend(pac::Interrupt::SUBGHZ_RADIO); // need unsafe block
+            }
+        }
+        let _guard = IrqGuard;
         unsafe { interrupt::SUBGHZ_RADIO.enable() };
         IRQ_SIGNAL.wait().await;
+        Timer::after_micros(500).await;
         Ok(())
     }
 
