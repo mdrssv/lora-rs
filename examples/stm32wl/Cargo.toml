@@ -34,7 +34,7 @@ embassy-time = { version = "0.5.0", features = [
     "tick-hz-32_000",
 ] }
 embassy-sync = { version = "0.8", features = ["defmt"] }
-embassy-futures = { version = "0", features = ["defmt"] }
+embassy-futures = { version = "0", features = [] }
 
 lora-phy = { path = "../../lora-phy", features = ["lorawan-radio", "defmt-03"] }
 lorawan-device = { path = "../../lorawan-device", features = [

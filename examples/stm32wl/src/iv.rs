@@ -5,6 +5,7 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
 use embassy_time::Timer;
 use embedded_hal::digital::OutputPin;
+use embassy_futures::yield_now;
 use embedded_hal_async::spi::{ErrorType, Operation, SpiBus, SpiDevice};
 use lora_phy::mod_params::RadioError;
 use lora_phy::mod_params::RadioError::*;
@@ -63,7 +64,7 @@ where
         Ok(())
     }
     async fn wait_on_busy(&mut self) -> Result<(), RadioError> {
-        while pac::PWR.sr2().read().rfbusys() {}
+        while pac::PWR.sr2().read().rfbusys() { yield_now().await; }
         Ok(())
     }
 
