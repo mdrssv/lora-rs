@@ -12,7 +12,7 @@ mod variant;
 pub use variant::*;
 
 // Maximum number of registers that can be added to the retention list
-const MAX_NUMBER_REGS_IN_RETENTION: u8 = 4;
+const MAX_NUMBER_REGS_IN_RETENTION: u8 = 10;
 
 // Internal frequency of the radio
 const SX126X_XTAL_FREQ: u32 = 32000000;
@@ -93,7 +93,8 @@ where
             )
             .await?;
 
-        let number_of_registers = buffer[0];
+        let number_of_registers = buffer[0].min(MAX_NUMBER_REGS_IN_RETENTION);
+        assert!(number_of_registers < buffer.len() as u8, "number_of_registers({}) > buffer.len() ({})", number_of_registers, buffer.len());
         for i in 0..number_of_registers {
             if register.addr1() == buffer[(1 + (2 * i)) as usize] && register.addr2() == buffer[(2 + (2 * i)) as usize]
             {
@@ -840,6 +841,11 @@ where
                 if IrqMask::RxTxTimeout.is_set(irq_flags) {
                     return Err(RadioError::ReceiveTimeout);
                 }
+    // async fn clear_irq_status_mask(&mut self, masks: &[IrqMask]) -> Result<(), RadioError> {
+    //     let mut op_code_and_irq_status = [OpCode::ClrIrqStatus.value(), 0xffu8, 0xffu8]; // clear all interrupts
+    //     op_code_and_irq_status[1..].copy_from_slice(&masks.iter().copied().fold(0u16, |acc, mask| acc | mask.value()).to_le_bytes());                                                                             //
+    //     self.intf.write(&op_code_and_irq_status, false).await
+    // }
                 if IrqMask::PreambleDetected.is_set(irq_flags) || IrqMask::HeaderValid.is_set(irq_flags) {
                     return Ok(Some(IrqState::Detect));
                 }

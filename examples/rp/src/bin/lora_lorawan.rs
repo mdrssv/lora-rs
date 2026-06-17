@@ -8,13 +8,13 @@ use defmt::*;
 use embassy_executor::Spawner;
 use embassy_rp::gpio::{Input, Level, Output, Pin, Pull};
 use embassy_rp::spi::{Config, Spi};
-use embassy_time::Delay;
+use embassy_time::{Delay, Timer};
 use embedded_hal_bus::spi::ExclusiveDevice;
 use lora_phy::iv::GenericSx126xInterfaceVariant;
 use lora_phy::lorawan_radio::LorawanRadio;
 use lora_phy::sx126x::{self, Sx1262, Sx126x, TcxoCtrlVoltage};
 use lora_phy::LoRa;
-use lorawan_device::async_device::{region, Device, EmbassyTimer, JoinMode};
+use lorawan_device::async_device::{region, Device, EmbassyTimer, JoinMode, JoinResponse};
 use lorawan_device::{AppEui, AppKey, DevEui};
 use {defmt_rtt as _, panic_probe as _};
 
@@ -53,20 +53,24 @@ async fn main(_spawner: Spawner) {
 
     let radio: LorawanRadio<_, _, MAX_TX_POWER> = lora.into();
     let region: region::Configuration = region::Configuration::new(LORAWAN_REGION);
-    let mut device: Device<_, _, _> =
-        Device::new(region, radio, EmbassyTimer::new(), embassy_rp::clocks::RoscRng);
+    let mut device: Device<_, _, _> = Device::new(region, radio, EmbassyTimer::new(), embassy_rp::clocks::RoscRng);
 
     defmt::info!("Joining LoRaWAN network");
 
-    // TODO: Adjust the EUI and Keys according to your network credentials
-    let resp = device
-        .join(&JoinMode::OTAA {
-            deveui: DevEui::from([0, 0, 0, 0, 0, 0, 0, 0]),
-            appeui: AppEui::from([0, 0, 0, 0, 0, 0, 0, 0]),
-            appkey: AppKey::from([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
-        })
-        .await
-        .unwrap();
-
-    info!("LoRaWAN network joined: {:?}", resp);
+    loop {
+        // TODO: Adjust the EUI and Keys according to your network credentials
+        let resp = device
+            .join(&JoinMode::OTAA {
+                deveui: DevEui::from([0, 0, 0, 0, 0, 0, 0, 0]),
+                appeui: AppEui::from([0, 0, 0, 0, 0, 0, 0, 0]),
+                appkey: AppKey::from([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+            })
+            .await
+            .unwrap();
+        info!("LoRaWAN network joined: {:?}", resp);
+        if resp == JoinResponse::JoinSuccess {
+            break;
+        }
+        Timer::after_secs(10).await;
+    }
 }

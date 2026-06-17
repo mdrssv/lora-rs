@@ -6,6 +6,7 @@ use embassy_sync::signal::Signal;
 use embassy_time::Timer;
 use embedded_hal::digital::OutputPin;
 use embassy_futures::yield_now;
+use embassy_stm32::rcc::{StopMode, WakeGuard};
 use embedded_hal_async::spi::{ErrorType, Operation, SpiBus, SpiDevice};
 use lora_phy::mod_params::RadioError;
 use lora_phy::mod_params::RadioError::*;
@@ -30,6 +31,7 @@ pub struct Stm32wlInterfaceVariant<CTRL> {
     rf_switch_rx: Option<CTRL>,
     rf_switch_tx: Option<CTRL>,
     rf_switch_en: Option<CTRL>,
+    guard: WakeGuard,
 }
 
 impl<CTRL> Stm32wlInterfaceVariant<CTRL>
@@ -50,6 +52,7 @@ where
             rf_switch_rx,
             rf_switch_tx,
             rf_switch_en,
+            guard: WakeGuard::new(StopMode::Standby),
         })
     }
 }
@@ -58,17 +61,21 @@ impl<CTRL> InterfaceVariant for Stm32wlInterfaceVariant<CTRL>
 where
     CTRL: OutputPin,
 {
-    async fn reset(&mut self, _delay: &mut impl DelayNs) -> Result<(), RadioError> {
+    async fn reset(&mut self, delay: &mut impl DelayNs) -> Result<(), RadioError> {
         pac::RCC.csr().modify(|w| w.set_rfrst(true));
+        delay.delay_ms(50).await;
         pac::RCC.csr().modify(|w| w.set_rfrst(false));
+        delay.delay_ms(50).await;
         Ok(())
     }
     async fn wait_on_busy(&mut self) -> Result<(), RadioError> {
+        let _guard = WakeGuard::new(StopMode::Stop2);
         while pac::PWR.sr2().read().rfbusys() { yield_now().await; }
         Ok(())
     }
 
     async fn await_irq(&mut self) -> Result<(), RadioError> {
+        let _guard = WakeGuard::new(StopMode::Stop2);
         IRQ_SIGNAL.reset();
         // Clear pending interrupts before enabling IRQ
         NVIC::unpend(pac::Interrupt::SUBGHZ_RADIO);
@@ -134,6 +141,7 @@ impl<T: SpiBus> ErrorType for SubghzSpiDevice<T> {
 
 impl<T: SpiBus> SpiDevice for SubghzSpiDevice<T> {
     async fn transaction(&mut self, operations: &mut [Operation<'_, u8>]) -> Result<(), Self::Error> {
+        let _guard = WakeGuard::new(StopMode::Stop2);
         pac::PWR.subghzspicr().modify(|w| w.set_nss(false));
 
         let op_res = 'ops: {

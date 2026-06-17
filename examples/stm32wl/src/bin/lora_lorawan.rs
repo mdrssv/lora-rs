@@ -9,15 +9,16 @@ mod iv;
 use defmt::info;
 use embassy_executor::Spawner;
 use embassy_stm32::gpio::{Level, Output, Pin, Speed};
+use embassy_stm32::peripherals::{DMA1_CH1, DMA1_CH2};
 use embassy_stm32::rng::{self, Rng};
 use embassy_stm32::spi::Spi;
 use embassy_stm32::time::Hertz;
-use embassy_stm32::{bind_interrupts, peripherals};
-use embassy_time::Delay;
+use embassy_stm32::{bind_interrupts, dma, peripherals};
+use embassy_time::{Delay, Timer};
 use lora_phy::lorawan_radio::LorawanRadio;
 use lora_phy::sx126x::{self, Stm32wl, Sx126x, TcxoCtrlVoltage};
 use lora_phy::LoRa;
-use lorawan_device::async_device::{region, Device, EmbassyTimer, JoinMode};
+use lorawan_device::async_device::{region, Device, EmbassyTimer, JoinMode, JoinResponse};
 use lorawan_device::{AppEui, AppKey, DevEui};
 use {defmt_rtt as _, panic_probe as _};
 
@@ -40,35 +41,45 @@ const DEFAULT_APPKEY: [u8; 16] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
 bind_interrupts!(struct Irqs{
     SUBGHZ_RADIO => InterruptHandler;
     RNG => rng::InterruptHandler<peripherals::RNG>;
+    DMA1_CHANNEL1 => dma::InterruptHandler<DMA1_CH1>;
+    DMA1_CHANNEL2 =>  dma::InterruptHandler<DMA1_CH2>;
 });
 
-#[embassy_executor::main]
+#[embassy_executor::main(executor = "embassy_stm32::executor::Executor", entry = "cortex_m_rt::entry")]
 async fn main(_spawner: Spawner) {
     let mut config = embassy_stm32::Config::default();
+    #[cfg(feature = "lptim")]
     {
-        use embassy_stm32::rcc::*;
+        use embassy_stm32::rcc::{mux::*, *};
         config.rcc.hse = Some(Hse {
             freq: Hertz(32_000_000),
             mode: HseMode::Bypass,
             prescaler: HsePrescaler::DIV1,
         });
-        config.rcc.sys = Sysclk::PLL1_R;
+
+        config.rcc.ls = LsConfig::default_lse();
+        config.rcc.mux.lptim1sel = Lptimsel::LSE;
+        config.rcc.mux.rngsel = Rngsel::PLL1_Q;
+        config.rcc.mux.adcsel = Adcsel::SYS;
+        config.rcc.ls.rtc = RtcClockSource::DISABLE;
         config.rcc.pll = Some(Pll {
             source: PllSource::HSE,
             prediv: PllPreDiv::DIV2,
-            mul: PllMul::MUL6,
-            divp: None,
-            divq: Some(PllQDiv::DIV2), // PLL1_Q clock (32 / 2 * 6 / 2), used for RNG
-            divr: Some(PllRDiv::DIV2), // sysclk 48Mhz clock (32 / 2 * 6 / 2)
+            mul: PllMul::MUL11,
+            divp: Some(PllPDiv::DIV4),
+            divq: Some(PllQDiv::DIV4), // PLL1_Q clock (32 / 2 * 6 / 2), used for RNG
+            divr: Some(PllRDiv::DIV4), // sysclk 48Mhz clock (32 / 2 * 6 / 2)
         });
+        config.rcc.sys = embassy_stm32::rcc::Sysclk::PLL1_R;
+        config.enable_debug_during_sleep = true;
     }
     let p = embassy_stm32::init(config);
 
-    let ctrl1 = Output::new(p.PC4.degrade(), Level::Low, Speed::High);
-    let ctrl2 = Output::new(p.PC5.degrade(), Level::Low, Speed::High);
-    let ctrl3 = Output::new(p.PC3.degrade(), Level::High, Speed::High);
+    let ctrl1 = Output::new(p.PC4, Level::Low, Speed::High);
+    let ctrl2 = Output::new(p.PC5, Level::Low, Speed::High);
+    let ctrl3 = Output::new(p.PC3, Level::High, Speed::High);
 
-    let spi = Spi::new_subghz(p.SUBGHZSPI, p.DMA1_CH1, p.DMA1_CH2);
+    let spi = Spi::new_subghz(p.SUBGHZSPI, p.DMA1_CH1, p.DMA1_CH2, Irqs);
     let spi = SubghzSpiDevice(spi);
     let use_high_power_pa = true;
     let config = sx126x::Config {
@@ -86,14 +97,21 @@ async fn main(_spawner: Spawner) {
 
     defmt::info!("Joining LoRaWAN network");
 
-    let resp = device
-        .join(&JoinMode::OTAA {
-            deveui: DevEui::from(DEVEUI.unwrap_or(DEFAULT_DEVEUI)),
-            appeui: AppEui::from(APPEUI.unwrap_or(DEFAULT_APPEUI)),
-            appkey: AppKey::from(APPKEY.unwrap_or(DEFAULT_APPKEY)),
-        })
-        .await
-        .unwrap();
+    loop {
+        info!("keys: {=[u8]:x} {=[u8]:x} {=[u8]:x}", APPKEY.unwrap_or_default(), DEVEUI.unwrap_or_default(), APPEUI.unwrap_or_default());
+        let resp = device
+            .join(&JoinMode::OTAA {
+                deveui: DevEui::from(DEVEUI.unwrap_or(DEFAULT_DEVEUI)),
+                appeui: AppEui::from(APPEUI.unwrap_or(DEFAULT_APPEUI)),
+                appkey: AppKey::from(APPKEY.unwrap_or(DEFAULT_APPKEY)),
+            })
+            .await
+            .unwrap();
 
-    info!("LoRaWAN network joined: {:?}", resp);
+        info!("LoRaWAN network joined: {:?}", resp);
+        if let JoinResponse::JoinSuccess = resp {
+            break;
+        }
+        Timer::after_secs(10).await;
+    }
 }

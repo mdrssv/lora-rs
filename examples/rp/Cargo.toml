@@ -44,3 +44,4 @@ portable-atomic = { version = "1.5", features = [
 
 [profile.release]
 debug = 2
+lto = true
